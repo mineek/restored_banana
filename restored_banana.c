@@ -142,6 +142,31 @@ int init_display()
                 usleep(10000);
             }
         }
+        if (strcmp(input, "draw_image") == 0) {
+            FILE *image = fopen("/mnt1/private/var/root/image.tga", "r");
+            if (image == NULL) {
+                printf("image not found\n");
+                continue;
+            }
+            unsigned char header[18];
+            fread(header, 1, 18, image);
+            int imageWidth = header[13] * 256 + header[12];
+            int imageHeight = header[15] * 256 + header[14];
+            int imageBPP = header[16];
+            printf("image width: %d, image height: %d, image bpp: %d\n", imageWidth, imageHeight, imageBPP);
+            unsigned char *imageData = malloc(imageWidth * imageHeight * 4);
+            fread(imageData, 1, imageWidth * imageHeight * 4, image);
+            fclose(image);
+            for (int i = 0; i < imageHeight; i++) {
+                for (int j = 0; j < imageWidth; j++) {
+                    int offset = (i + height / 2 - imageHeight / 2) * bytesPerRow + (j + width / 2 - imageWidth / 2) * 4;
+                    int imageOffset = i * imageWidth * 4 + j * 4;
+                    *(int *)(base + offset) = *(int *)(imageData + imageOffset);
+                }
+            }
+            free(imageData);
+
+        }
         if (strcmp(input, "help") == 0) {
             write_string(base, bytesPerRow, prevX, prevY, "help", 0xFFFFFFFF, 0);
             prevY += 30;
@@ -150,6 +175,8 @@ int init_display()
             write_string(base, bytesPerRow, prevX, prevY, "clear", 0xFFFFFFFF, 0);
             prevY += 30;
             write_string(base, bytesPerRow, prevX, prevY, "progress_bar", 0xFFFFFFFF, 0);
+            prevY += 30;
+            write_string(base, bytesPerRow, prevX, prevY, "draw_image", 0xFFFFFFFF, 0);
             prevY += 30;
         }
     }
