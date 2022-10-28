@@ -59,6 +59,11 @@ void make_progress_bar(void *base, int bytesPerRow, int x, int y, int width, int
     }
 }
 
+void *base = NULL;
+int bytesPerRow = 0;
+int height = 0;
+int width = 0;
+
 int init_display()
 {
     void *IOMobileFramebuffer = dlopen("/System/Library/PrivateFrameworks/IOMobileFramebuffer.framework/IOMobileFramebuffer", RTLD_LAZY);
@@ -75,8 +80,6 @@ int init_display()
     IOMobileFramebufferReturn (*IOMobileFramebufferSwapEnd)(IOMobileFramebufferRef pointer) = dlsym(IOMobileFramebuffer, "IOMobileFramebufferSwapEnd");
     dlclose(IOMobileFramebuffer);
     printf("got display %p\n", display);
-    int width = 0;
-    int height = 0;
     width = size.width;
     height = size.height;
     printf("width: %d, height: %d", width, height);
@@ -91,21 +94,16 @@ int init_display()
     dlclose(IOSurface);
     IOSurfaceLock(buffer, 0, 0);
     printf("locked buffer\n");
-    void *base = IOSurfaceGetBaseAddress(buffer);
+    base = IOSurfaceGetBaseAddress(buffer);
     printf("got base address at: %p", base);
     printf("\n\n\n");
-    int bytesPerRow = IOSurfaceGetBytesPerRow(buffer);
+    bytesPerRow = IOSurfaceGetBytesPerRow(buffer);
     printf("got bytes per row: %d", bytesPerRow);
     for (int i = 0; i < height; i++) {
         for (int j = 0; j < width; j++) {
             int offset = i * bytesPerRow + j * 4;
             *(int *)(base + offset) = 0xFF0000FF;
         }
-    }
-    write_string(base, bytesPerRow, width / 2 - 100, height / 2 + 30, "text...", 0xFFFFFFFF, 1);
-    for (int i = 0; i < 100; i++) {
-        make_progress_bar(base, bytesPerRow, width + 15, height / 2 + 100, width, 40, i, 0xFF00FF00);
-        usleep(10000);
     }
     printf("wrote to buffer\n");
     IOSurfaceUnlock(buffer, 0, 0);
@@ -115,71 +113,6 @@ int init_display()
     int token;
     IOMobileFramebufferSwapBegin(display, &token);
     IOMobileFramebufferSwapEnd(display);
-    char input[100];
-    int prevX = 0;
-    int prevY = 0;
-    while (1) {
-        printf("> ");
-        scanf("%s", input);
-        write_string(base, bytesPerRow, prevX, prevY, input, 0xFFFFFFFF, 0);
-        prevY += 30;
-        if (strcmp(input, "exit") == 0) {
-            break;
-        }
-        if (strcmp(input, "clear") == 0) {
-            for (int i = 0; i < height; i++) {
-                for (int j = 0; j < width; j++) {
-                    int offset = i * bytesPerRow + j * 4;
-                    *(int *)(base + offset) = 0xFF0000FF;
-                }
-            }
-            prevX = 0;
-            prevY = 0;
-        }
-        if (strcmp(input, "progress_bar") == 0) {
-            for (int i = 0; i < 100; i++) {
-                make_progress_bar(base, bytesPerRow, width + 15, height / 2 + 100, width, 40, i, 0xFF00FF00);
-                usleep(10000);
-            }
-        }
-        if (strcmp(input, "draw_image") == 0) {
-            FILE *image = fopen("/mnt1/private/var/root/image.tga", "r");
-            if (image == NULL) {
-                printf("image not found\n");
-                continue;
-            }
-            unsigned char header[18];
-            fread(header, 1, 18, image);
-            int imageWidth = header[13] * 256 + header[12];
-            int imageHeight = header[15] * 256 + header[14];
-            int imageBPP = header[16];
-            printf("image width: %d, image height: %d, image bpp: %d\n", imageWidth, imageHeight, imageBPP);
-            unsigned char *imageData = malloc(imageWidth * imageHeight * 4);
-            fread(imageData, 1, imageWidth * imageHeight * 4, image);
-            fclose(image);
-            for (int i = 0; i < imageHeight; i++) {
-                for (int j = 0; j < imageWidth; j++) {
-                    int offset = (i + height / 2 - imageHeight / 2) * bytesPerRow + (j + width / 2 - imageWidth / 2) * 4;
-                    int imageOffset = i * imageWidth * 4 + j * 4;
-                    *(int *)(base + offset) = *(int *)(imageData + imageOffset);
-                }
-            }
-            free(imageData);
-
-        }
-        if (strcmp(input, "help") == 0) {
-            write_string(base, bytesPerRow, prevX, prevY, "help", 0xFFFFFFFF, 0);
-            prevY += 30;
-            write_string(base, bytesPerRow, prevX, prevY, "exit", 0xFFFFFFFF, 0);
-            prevY += 30;
-            write_string(base, bytesPerRow, prevX, prevY, "clear", 0xFFFFFFFF, 0);
-            prevY += 30;
-            write_string(base, bytesPerRow, prevX, prevY, "progress_bar", 0xFFFFFFFF, 0);
-            prevY += 30;
-            write_string(base, bytesPerRow, prevX, prevY, "draw_image", 0xFFFFFFFF, 0);
-            prevY += 30;
-        }
-    }
     return 0;
 }
 
@@ -187,7 +120,77 @@ int main(int argc, char *argv[])
 {
     printf("restored_banana: hello!\n");
     printf("restored_banana: init_display now!\n");
+    if (argc == 2 && strcmp(argv[1], "child") == 0) {
+        init_display();
+        return 0;
+    }
+    pid_t pid = fork();
+    if (pid == 0) {
+        // you probably hate me for this, but it's the only way to get the display to work as far as I can tell
+        char *args[] = {argv[0], "child", NULL};
+        execve(argv[0], args, NULL);
+    }
+    sleep(1);
+    printf("restored_banana: init_display done, doing our part...\n");
     init_display();
+    printf("restored_banana: done!\n");
+    for (int i = 0; i < height; i++) {
+        for (int j = 0; j < width; j++) {
+            int offset = i * bytesPerRow + j * 4;
+            *(int *)(base + offset) = 0x00000000;
+        }
+    }
+    // open shell
+    char *input = malloc(100);
+    int prevX = 0;
+    int prevY = 0;
+    while (1) {
+        printf("restored_banana: ");
+        scanf("%s", input);
+        if (strcmp(input, "exit") == 0) {
+            break;
+        } else if (strcmp(input, "clear") == 0) {
+            for (int i = 0; i < height; i++) {
+                for (int j = 0; j < width; j++) {
+                    int offset = i * bytesPerRow + j * 4;
+                    *(int *)(base + offset) = 0x00000000;
+                }
+            }
+        } else if (strcmp(input, "echo") == 0) {
+            scanf("%s", input);
+            write_string(base, bytesPerRow, prevX, prevY, input, 0xFFFFFFFF, 1);
+            prevY += 30;
+            printf("restored_banana: wrote string: %s\n", input);
+        } else if (strcmp(input, "drawimage") == 0) {
+            // read a TGA 32-bit image from /mnt1/private/var/root/image.tga and draw it to the middle of the screen
+            FILE *image = fopen("/mnt1/private/var/root/image.tga", "rb");
+            if (image == NULL) {
+                printf("restored_banana: failed to open image\n");
+                continue;
+            }
+            // header
+            char header[18];
+            fread(header, 1, 18, image);
+            int imageWidth = header[13] * 256 + header[12];
+            int imageHeight = header[15] * 256 + header[14];
+            int imageBytesPerRow = imageWidth * 4;
+            int imageBase = (height / 2 - imageHeight / 2) * bytesPerRow + (width / 2 - imageWidth / 2) * 4;
+            printf("restored_banana: image width: %d, image height: %d, image bytes per row: %d, image base: %d\n", imageWidth, imageHeight, imageBytesPerRow, imageBase);
+            // image data
+            char *imageData = malloc(imageHeight * imageBytesPerRow);
+            fread(imageData, 1, imageHeight * imageBytesPerRow, image);
+            for (int i = 0; i < imageHeight; i++) {
+                for (int j = 0; j < imageWidth; j++) {
+                    int offset = i * imageBytesPerRow + j * 4;
+                    int offset2 = i * bytesPerRow + j * 4;
+                    *(int *)(base + imageBase + offset2) = *(int *)(imageData + offset);
+                }
+            }
+            free(imageData);
+            fclose(image);
+
+        }
+    }
     printf("restored_banana: goodbye!\n");
     return 0;
 }
